@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Email Automation Web</title>
+    <link rel="stylesheet" href="/static/style.css?v=3" />
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Email Automation</h1>
+            <p>Mobile-friendly web interface with MPESA subscription gating.</p>
+        </header>
+
+        <section class="card subscription-card">
+            <h2>Subscription Status</h2>
+            <div id="subscriptionStatus" class="status inactive">Checking...</div>
+            <p id="subscriptionNote" class="note">Loading subscription details...</p>
+            <p>Expiry: <span id="expiryDate">—</span></p>
+            <p>Days left: <span id="daysLeft">0</span></p>
+
+            <label for="mpesaPhone">MPESA Phone Number</label>
+            <input id="mpesaPhone" type="tel" placeholder="+2547XXXXXXXX" />
+
+            <button id="payButton" type="button" class="primary">Pay with MPESA</button>
+
+            <label for="checkoutInput">Checkout Request ID</label>
+            <input id="checkoutInput" type="text" readonly />
+
+            <label for="paymentStatus">Payment Status</label>
+            <select id="paymentStatus">
+                <option value="success">success</option>
+                <option value="failure">failure</option>
+            </select>
+
+            <button id="confirmPaymentButton" type="button">Confirm Payment</button>
+            <div id="subscriptionMessage" class="message"></div>
+        </section>
+
+        <section class="card settings-card">
+            <h2>Sender Configuration</h2>
+            <form id="settingsForm">
+                <label for="gmailEmail">Gmail Address</label>
+                <input id="gmailEmail" name="gmail_email" type="email" required />
+
+                <label for="appPassword">Gmail App Password</label>
+                <div class="password-field">
+                    <input id="appPassword" name="app_password" type="password" required />
+                    <button id="passwordToggleButton" type="button" class="password-toggle" aria-label="Show or hide password">
+                        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                            <path d="M12 5c-5 0-9.27 3.11-11 7 1.73 3.89 6 7 11 7s9.27-3.11 11-7c-1.73-3.89-6-7-11-7zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8.5c-1.93 0-3.5 1.57-3.5 3.5S10.07 15.5 12 15.5 15.5 13.93 15.5 12 13.93 8.5 12 8.5z" fill="currentColor" />
+                        </svg>
+                    </button>
+                </div>
+                <div class="app-password-help">
+                    <strong>Need a Gmail App Password?</strong>
+                    <p>To use SMTP with Gmail, create a Google App Password and enter it here instead of your normal login password.</p>
+                    <ol>
+                        <li>Open <a href="https://myaccount.google.com/security" target="_blank" rel="noreferrer">Google Account Security</a>.</li>
+                        <li>Enable <strong>2-Step Verification</strong> if it is not already enabled.</li>
+                        <li>Click <strong>App passwords</strong> under Signing in to Google.</li>
+                        <li>Select <strong>Mail</strong> as the app and choose <strong>Other</strong> to label it.</li>
+                        <li>Copy the 16-character password and paste it here.</li>
+                    </ol>
+                    <p class="note">Use this app password for SMTP; do not use your normal Gmail password.</p>
+                </div>
+
+                <label for="emailSubject">Email Subject</label>
+                <input id="emailSubject" name="email_subject" type="text" required />
+
+                <label for="emailBody">Email Body</label>
+                <textarea id="emailBody" name="email_body" rows="4" required></textarea>
+
+                <label for="startHour">Start Hour</label>
+                <input id="startHour" name="start_hour" type="number" min="0" max="23" required />
+
+                <label for="endHour">End Hour</label>
+                <input id="endHour" name="end_hour" type="number" min="0" max="23" required />
+
+                <label for="emailsPerHour">Emails Per Hour</label>
+                <input id="emailsPerHour" name="emails_per_hour" type="number" min="1" required />
+
+                <label for="timeVariation">Time Variation (seconds)</label>
+                <input id="timeVariation" name="time_variation_seconds" type="number" min="0" required />
+
+                <button type="submit" class="primary">Save Settings</button>
+                <div id="configMessage" class="message"></div>
+            </form>
+        </section>
+
+        <section class="card controls-card">
+            <h2>Controls</h2>
+            <button id="sendSingleButton" type="button" class="primary">Send Single Email</button>
+            <label for="batchCount">Batch Count</label>
+            <input id="batchCount" type="number" min="1" value="10" />
+            <button id="sendBatchButton" type="button">Send Batch</button>
+            <button id="sendContinuousButton" type="button">Start Continuous Mode</button>
+            <button id="stopButton" type="button">Stop</button>
+            <div id="controlMessage" class="message"></div>
+        </section>
+
+        <section class="card stats-card">
+            <h2>Statistics</h2>
+            <div class="stats-grid">
+                <div><strong>Emails Sent Today</strong><span id="emailsSentToday">0</span></div>
+                <div><strong>Total Emails Sent</strong><span id="emailsSentTotal">0</span></div>
+                <div><strong>Failed Emails</strong><span id="failedEmails">0</span></div>
+                <div><strong>Daily Limit</strong><span id="dailyLimit">0</span></div>
+            </div>
+        </section>
+
+        <section class="card logs-card">
+            <h2>Activity Log</h2>
+            <div id="activityLog" class="log-list"></div>
+        </section>
+    </div>
+
+    <script src="/static/app.js?v=4"></script>
+</body>
+</html>

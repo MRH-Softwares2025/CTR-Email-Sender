@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Email Automation - Subscription</title>
+    <link rel="stylesheet" href="/static/style.css?v=4" />
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Subscription</h1>
+            <p>Choose a plan to activate your subscription.</p>
+        </header>
+
+        <section class="card subscription-card">
+            <h2>Subscription Status</h2>
+            <div id="subscriptionStatus" class="status inactive">Loading...</div>
+            <p id="subscriptionNote" class="note">Subscription info is loading...</p>
+            <p>Expiry: <span id="expiryDate">—</span></p>
+            <p>Days left: <span id="daysLeft">0</span></p>
+            <p id="currentPlan" class="note">Current plan: <span id="planName">—</span></p>
+        </section>
+
+        <section class="plans-section">
+            <h2>Select a Plan</h2>
+            <div id="plansContainer" class="plans-container">
+                <p>Loading plans...</p>
+            </div>
+        </section>
+
+        <section class="card payment-section">
+            <h2>Payment</h2>
+            <label for="mpesaPhone">MPESA Phone Number</label>
+            <input id="mpesaPhone" type="tel" placeholder="+2547XXXXXXXX" />
+            <button id="payButton" type="button" class="primary" disabled>Pay with MPESA</button>
+            <p id="selectedPlanInfo" class="note">Please select a plan above</p>
+            <div id="subscriptionMessage" class="message"></div>
+
+            <div class="navigation-links">
+                <a href="/send" id="sendPageLink" class="primary-link">Go to Email Sending</a>
+                <button id="resetButton" type="button" class="primary-link secondary">Start Over</button>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/subscription.js?v=2"></script>
+</body>
+</html>
