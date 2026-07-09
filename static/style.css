@@ -13,11 +13,17 @@
     box-sizing: border-box;
 }
 
+html {
+    font-size: 16px;
+}
+
 body {
     margin: 0;
     font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     background: var(--bg);
     color: var(--text);
+    min-height: 100vh;
+    -webkit-text-size-adjust: 100%;
 }
 
 .container {
@@ -28,13 +34,38 @@ body {
 
 header {
     margin-bottom: 20px;
-    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+}
+
+.header-left h1 {
+    margin-bottom: 4px;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.small-logout {
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.small-logout:hover {
+    color: var(--text);
 }
 
 .notification-bell {
-    position: absolute;
-    top: 0;
-    right: 0;
+    position: relative;
 }
 
 .icon-button {
@@ -44,7 +75,6 @@ header {
     cursor: pointer;
     color: var(--muted);
     position: relative;
-    margin-top: 0;
 }
 
 .icon-button:hover {
@@ -53,8 +83,8 @@ header {
 
 .notification-badge {
     position: absolute;
-    top: -2px;
-    right: -2px;
+    top: -6px;
+    right: -6px;
     background: var(--danger);
     color: white;
     font-size: 10px;
@@ -119,6 +149,24 @@ header {
     max-height: 300px;
     overflow-y: auto;
     padding: 0;
+}
+
+/* Settings layout: two cards side-by-side on wide screens, stacked on mobile */
+.settings-wrapper {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.email-config-card, .timing-config-card {
+    padding: 16px;
+}
+
+@media (max-width: 800px) {
+    .settings-wrapper {
+        grid-template-columns: 1fr;
+    }
 }
 
 .notification-item {
@@ -526,11 +574,49 @@ button:disabled {
 }
 
 @media (max-width: 640px) {
+    .container {
+        padding: 12px;
+    }
+
+    header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .header-right {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    .card {
+        padding: 14px;
+    }
+
     .stats-grid {
         grid-template-columns: 1fr;
     }
 
+    .settings-wrapper {
+        grid-template-columns: 1fr;
+    }
+
+    input,
+    textarea,
+    select,
     button {
+        font-size: 16px;
+    }
+
+    button,
+    .primary-link,
+    .small-logout {
         width: 100%;
+        min-height: 44px;
+    }
+
+    .notification-dropdown {
+        width: min(320px, calc(100vw - 20px));
+        right: 0;
     }
 }

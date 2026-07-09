@@ -30,6 +30,15 @@ CREATE TABLE IF NOT EXISTS settings (
 )
 """
 
+CREATE_USERS_TABLE = """
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    gmail_email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TEXT
+)
+"""
+
 CREATE_SUBSCRIPTION_PLANS_TABLE = """
 CREATE TABLE IF NOT EXISTS subscription_plans (
     id INTEGER PRIMARY KEY,
@@ -119,6 +128,7 @@ def initialize_db():
     with get_connection() as conn:
         conn.execute(CREATE_SUBSCRIPTION_TABLE)
         conn.execute(CREATE_SETTINGS_TABLE)
+        conn.execute(CREATE_USERS_TABLE)
         conn.execute(CREATE_SUBSCRIPTION_PLANS_TABLE)
         conn.execute(CREATE_PAYMENTS_TABLE)
         conn.execute(CREATE_LOGS_TABLE)
@@ -290,6 +300,7 @@ def get_payment(checkout_request_id):
         return {
             "id": row["id"],
             "checkout_request_id": row["checkout_request_id"],
+            "gmail_email": row["gmail_email"],
             "phone_number": row["phone_number"],
             "status": row["status"],
             "plan_id": row["plan_id"],
@@ -316,3 +327,32 @@ def get_recent_logs(limit=50):
             (limit,),
         ).fetchall()
         return [f"{row['timestamp']} - {row['message']}" for row in rows]
+
+
+def create_user(gmail_email, password_hash):
+    """Create a new user with hashed password"""
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        try:
+            conn.execute(
+                "INSERT INTO users (gmail_email, password_hash, created_at) VALUES (?, ?, ?)",
+                (gmail_email, password_hash, now)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def get_user(gmail_email):
+    """Get user by email"""
+    with get_connection() as conn:
+        row = conn.execute("SELECT * FROM users WHERE gmail_email = ?", (gmail_email,)).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "gmail_email": row["gmail_email"],
+            "password_hash": row["password_hash"],
+            "created_at": row["created_at"]
+        }

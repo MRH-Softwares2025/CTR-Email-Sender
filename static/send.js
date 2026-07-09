@@ -1,10 +1,10 @@
 const subscriptionStatus = document.getElementById("subscriptionStatus");
+const subscriptionNote = document.getElementById("subscriptionNote");
 const expiryDate = document.getElementById("expiryDate");
 const daysLeft = document.getElementById("daysLeft");
 const planName = document.getElementById("planName");
 const settingsForm = document.getElementById("settingsForm");
 const configMessage = document.getElementById("configMessage");
-const passwordToggleButton = document.getElementById("passwordToggleButton");
 const sendSingleButton = document.getElementById("sendSingleButton");
 const sendBatchButton = document.getElementById("sendBatchButton");
 const sendContinuousButton = document.getElementById("sendContinuousButton");
@@ -47,20 +47,10 @@ async function apiPost(path, body = {}) {
 }
 
 function setActionState(enabled) {
-    sendSingleButton.disabled = !enabled;
-    sendBatchButton.disabled = !enabled;
-    sendContinuousButton.disabled = !enabled;
-    stopButton.disabled = !enabled;
-}
-
-if (passwordToggleButton) {
-    passwordToggleButton.addEventListener("click", () => {
-        const passwordField = document.getElementById("appPassword");
-        if (!passwordField) return;
-        const isPassword = passwordField.type === "password";
-        passwordField.type = isPassword ? "text" : "password";
-        passwordToggleButton.setAttribute("aria-label", isPassword ? "Hide password" : "Show password");
-    });
+    if (sendSingleButton) sendSingleButton.disabled = !enabled;
+    if (sendBatchButton) sendBatchButton.disabled = !enabled;
+    if (sendContinuousButton) sendContinuousButton.disabled = !enabled;
+    if (stopButton) stopButton.disabled = !enabled;
 }
 
 function showMessage(container, text, success = true) {
@@ -100,8 +90,8 @@ function updateSettingsUI(data) {
     document.getElementById("gmailEmail").value = data.gmail_email || "";
     document.getElementById("emailSubject").value = data.email_subject || "";
     document.getElementById("emailBody").value = data.email_body || "";
-    document.getElementById("startHour").value = data.start_hour || 9;
-    document.getElementById("endHour").value = data.end_hour || 17;
+    document.getElementById("startHour").value = data.start_hour ?? 0;
+    document.getElementById("endHour").value = data.end_hour ?? 23;
     document.getElementById("emailsPerHour").value = data.emails_per_hour || 125;
     document.getElementById("timeVariation").value = data.time_variation_seconds || 300;
 }
@@ -114,7 +104,9 @@ function updateStatsUI(data) {
 }
 
 function updateLogsUI(logs) {
-    activityLog.textContent = logs.join("\n");
+    if (activityLog) {
+        activityLog.textContent = logs.join("\n");
+    }
 }
 
 async function loadPageState() {
@@ -145,14 +137,9 @@ settingsForm.addEventListener("submit", async (event) => {
         emails_per_hour: parseInt(document.getElementById("emailsPerHour").value, 10),
         time_variation_seconds: parseFloat(document.getElementById("timeVariation").value),
     };
-    const appPassword = document.getElementById("appPassword").value.trim();
-    if (appPassword) {
-        payload.app_password = appPassword;
-    }
     const result = await apiPost("/api/config", payload);
     showMessage(configMessage, result.message || "Settings saved.", result.success !== false);
     if (result.success) {
-        document.getElementById("appPassword").value = "";
         await loadPageState();
     }
 });
@@ -169,16 +156,16 @@ sendBatchButton.addEventListener("click", async () => {
         showMessage(controlMessage, "Batch count must be a number greater than 0.", false);
         return;
     }
+    if (count > 20) {
+        batchCount.value = "20";
+        showMessage(controlMessage, "Batch size is capped at 20 emails per send.", false);
+        return;
+    }
     const result = await apiPost("/api/send/batch", { count });
     showMessage(controlMessage, result.message || "Batch started.", result.success !== false);
     loadPageState();
 });
 
-sendContinuousButton.addEventListener("click", async () => {
-    const result = await apiPost("/api/send/continuous");
-    showMessage(controlMessage, result.message || "Continuous mode started.", result.success !== false);
-    loadPageState();
-});
 
 stopButton.addEventListener("click", async () => {
     const result = await apiPost("/api/send/stop");
@@ -328,4 +315,14 @@ if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", loadPageState);
 } else {
     loadPageState();
+}
+
+const logoutButton = document.getElementById("logoutButton");
+if (logoutButton) {
+    logoutButton.addEventListener("click", async () => {
+        const result = await apiPost("/api/logout", {});
+        if (result.success) {
+            window.location.href = result.redirect || "/login";
+        }
+    });
 }

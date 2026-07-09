@@ -1,21 +1,11 @@
 const loginForm = document.getElementById("loginForm");
-const configMessage = document.getElementById("configMessage");
+const loginMessage = document.getElementById("loginMessage");
 const passwordToggleButton = document.getElementById("passwordToggleButton");
 
-async function apiGet(path) {
-    const response = await fetch(path);
-    const result = await response.json();
-    if (!response.ok) {
-        return { success: false, message: result.detail || result.message || "Request failed." };
-    }
-    return result;
-}
-
-async function apiPost(path, body = {}) {
+async function apiPostForm(path, formData) {
     const response = await fetch(path, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: formData,
     });
     const result = await response.json();
     if (!response.ok) {
@@ -26,7 +16,7 @@ async function apiPost(path, body = {}) {
 
 if (passwordToggleButton) {
     passwordToggleButton.addEventListener("click", () => {
-        const passwordField = document.getElementById("appPassword");
+        const passwordField = document.getElementById("loginPassword");
         if (!passwordField) return;
         const isPassword = passwordField.type === "password";
         passwordField.type = isPassword ? "text" : "password";
@@ -35,31 +25,26 @@ if (passwordToggleButton) {
 }
 
 function showMessage(text, success = true) {
-    configMessage.textContent = text;
-    configMessage.className = `message ${success ? "success" : "error"}`;
+    loginMessage.textContent = text;
+    loginMessage.className = `message ${success ? "success" : "error"}`;
 }
 
 loginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const defaultsResponse = await apiGet("/api/defaults");
-    const defaults = defaultsResponse.success === false ? {} : defaultsResponse;
-    const payload = {
-        gmail_email: document.getElementById("gmailEmail").value,
-        app_password: document.getElementById("appPassword").value,
-        email_subject: defaults.email_subject || "Automated Email",
-        email_body: defaults.email_body || "This is an automated email.",
-        start_hour: defaults.start_hour ?? 9,
-        end_hour: defaults.end_hour ?? 17,
-        emails_per_hour: defaults.emails_per_hour ?? 125,
-        time_variation_seconds: defaults.time_variation_seconds ?? 300,
-    };
-    const result = await apiPost("/api/config", payload);
+    
+    const formData = new FormData();
+    formData.append("gmail_email", document.getElementById("gmailEmail").value);
+    formData.append("password", document.getElementById("loginPassword").value);
+    
+    const result = await apiPostForm("/api/login", formData);
     if (result.success) {
-        showMessage(result.message || "Saved successfully.");
+        showMessage(result.message || "Login successful.");
         // Redirect based on subscription status
         const redirectUrl = result.redirect || "/subscription";
-        window.location.href = redirectUrl;
+        setTimeout(() => {
+            window.location.href = redirectUrl;
+        }, 1000);
     } else {
-        showMessage(result.message || "Could not save settings.", false);
+        showMessage(result.message || "Login failed.", false);
     }
 });

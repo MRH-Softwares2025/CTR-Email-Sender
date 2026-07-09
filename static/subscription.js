@@ -167,5 +167,15 @@ if (resetButton) {
     });
 }
 
+const logoutButton = document.getElementById("logoutButton");
+if (logoutButton) {
+    logoutButton.addEventListener("click", async () => {
+        const result = await apiPost("/api/logout", {});
+        if (result.success) {
+            window.location.href = result.redirect || "/login";
+        }
+    });
+}
+
 loadSubscriptionState();
 loadPlans();

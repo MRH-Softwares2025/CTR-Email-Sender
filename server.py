@@ -6,11 +6,14 @@ import threading
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel
+from passlib.context import CryptContext
+from starlette.middleware.sessions import SessionMiddleware
 
 from db import (
     add_log,
@@ -26,6 +29,8 @@ from db import (
     get_plans,
     get_plan,
     get_payment,
+    create_user,
+    get_user,
 )
 from email_automation import EmailAutomationBot, EmailAutomationConfig
 from notification_system import get_notification_manager, NotificationPriority
@@ -76,9 +81,35 @@ def load_env_file():
 
 load_env_file()
 
-app = FastAPI()
+app = FastAPI(docs_url=None, redoc_url=None)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SECRET_KEY", "your-secret-key-change-in-production"),
+    same_site="lax",
+    https_only=False,
+)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; "
+        "base-uri 'self'; frame-ancestors 'none'"
+    )
+    return response
+
+# Password hashing
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 bot = None
 bot_thread = None
@@ -122,6 +153,22 @@ def is_subscription_active(gmail_email=None):
     return datetime.now(timezone.utc) < expiry
 
 
+def get_current_user(request: Request):
+    """Get current logged-in user from session"""
+    user_email = request.session.get("user_email")
+    if not user_email:
+        return None
+    return user_email
+
+
+def require_login(request: Request):
+    """Check if user is logged in, redirect to login if not"""
+    user_email = get_current_user(request)
+    if not user_email:
+        raise HTTPException(status_code=303, headers={"Location": "/login"})
+    return user_email
+
+
 def get_subscription_response(gmail_email=None):
     subscription = get_subscription(gmail_email)
     subscription_required = not is_subscription_check_disabled()
@@ -150,13 +197,48 @@ def get_subscription_response(gmail_email=None):
     }
 
 
-def get_mpesa_access_token():
+def normalize_phone_number(phone_number: str) -> str:
+    cleaned = re.sub(r"[^0-9+]", "", phone_number or "")
+    if not cleaned:
+        raise ValueError("Phone number is required")
+
+    if cleaned.startswith("+254"):
+        return cleaned[1:]
+    if cleaned.startswith("254"):
+        return cleaned
+    if cleaned.startswith("07"):
+        return f"254{cleaned[1:]}"
+    if cleaned.startswith("7"):
+        return f"254{cleaned}"
+    raise ValueError("Use a Kenyan number like 07XXXXXXXX or +2547XXXXXXXX")
+
+
+def get_mpesa_config():
     consumer_key = os.getenv("MPESA_CONSUMER_KEY")
     consumer_secret = os.getenv("MPESA_CONSUMER_SECRET")
-    if not consumer_key or not consumer_secret:
-        raise RuntimeError("MPESA consumer credentials are not configured.")
+    shortcode = os.getenv("MPESA_SHORTCODE")
+    passkey = os.getenv("MPESA_PASSKEY")
+    callback_url = os.getenv("MPESA_CALLBACK_URL", "http://localhost:8001/api/subscription/callback")
+    env_name = os.getenv("MPESA_ENVIRONMENT", "sandbox").lower()
+    base_url = os.getenv("MPESA_BASE_URL", "https://sandbox.safaricom.co.ke") if env_name == "sandbox" else os.getenv("MPESA_BASE_URL", "https://api.safaricom.co.ke")
+    return {
+        "consumer_key": consumer_key,
+        "consumer_secret": consumer_secret,
+        "shortcode": shortcode,
+        "passkey": passkey,
+        "callback_url": callback_url,
+        "base_url": base_url,
+    }
 
-    auth_url = "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials"
+
+def get_mpesa_access_token():
+    mpesa_config = get_mpesa_config()
+    consumer_key = mpesa_config["consumer_key"]
+    consumer_secret = mpesa_config["consumer_secret"]
+    if not consumer_key or not consumer_secret:
+        raise RuntimeError("MPESA consumer credentials are not configured. Set MPESA_CONSUMER_KEY and MPESA_CONSUMER_SECRET in your .env file.")
+
+    auth_url = f"{mpesa_config['base_url']}/oauth/v1/generate?grant_type=client_credentials"
     credentials = f"{consumer_key}:{consumer_secret}"
     auth_header = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
 
@@ -175,13 +257,15 @@ def get_mpesa_access_token():
 
 
 def initiate_mpesa_stk_push(phone_number: str, amount: str = "100"):
-    shortcode = os.getenv("MPESA_SHORTCODE")
-    passkey = os.getenv("MPESA_PASSKEY")
-    callback_url = os.getenv("MPESA_CALLBACK_URL", "http://localhost:8001/api/subscription/confirm")
+    mpesa_config = get_mpesa_config()
+    shortcode = mpesa_config["shortcode"]
+    passkey = mpesa_config["passkey"]
+    callback_url = mpesa_config["callback_url"]
 
     if not shortcode or not passkey:
-        raise RuntimeError("MPESA shortcode or passkey are not configured.")
+        raise RuntimeError("MPESA shortcode or passkey are not configured. Set MPESA_SHORTCODE and MPESA_PASSKEY in your .env file.")
 
+    normalized_phone = normalize_phone_number(phone_number)
     access_token = get_mpesa_access_token()
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     password = base64.b64encode(f"{shortcode}{passkey}{timestamp}".encode("utf-8")).decode("utf-8")
@@ -192,16 +276,16 @@ def initiate_mpesa_stk_push(phone_number: str, amount: str = "100"):
         "Timestamp": timestamp,
         "TransactionType": "CustomerPayBillOnline",
         "Amount": int(amount),
-        "PartyA": phone_number,
+        "PartyA": normalized_phone,
         "PartyB": shortcode,
-        "PhoneNumber": phone_number,
+        "PhoneNumber": normalized_phone,
         "CallBackURL": callback_url,
         "AccountReference": "EmailSubscription",
         "TransactionDesc": "Email automation subscription payment",
     }
 
     request = urllib.request.Request(
-        "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+        f"{mpesa_config['base_url']}/mpesa/stkpush/v1/processrequest",
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
@@ -213,6 +297,27 @@ def initiate_mpesa_stk_push(phone_number: str, amount: str = "100"):
     with urllib.request.urlopen(request, timeout=30) as response:
         body = response.read().decode("utf-8")
         return json.loads(body)
+
+
+def activate_subscription_for_payment(checkout_request_id: str, gmail_email: str, plan: dict, amount: int):
+    expiry = datetime.now(timezone.utc) + timedelta(days=plan["duration_days"])
+    start_date = datetime.now(timezone.utc).isoformat()
+    set_subscription(
+        expiry.isoformat(),
+        True,
+        plan_id=plan["id"],
+        amount_paid=amount,
+        start_date=start_date,
+        gmail_email=gmail_email,
+    )
+    update_payment_attempt(checkout_request_id, "Success", plan_id=plan["id"], amount=amount)
+    add_log(f"Subscription activated - Plan: {plan['name']} until {expiry.isoformat()}")
+    return {
+        "success": True,
+        "message": f"Subscription activated with {plan['name']} plan.",
+        "expiry": expiry.isoformat(),
+        "plan": plan,
+    }
 
 
 def load_bot_config():
@@ -273,18 +378,23 @@ async def root(request: Request):
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
+    # If already logged in, redirect to appropriate page
+    user_email = get_current_user(request)
+    if user_email:
+        settings = get_settings()
+        if settings and settings.get("gmail_email") == user_email:
+            if is_subscription_active(user_email) or is_subscription_check_disabled():
+                return RedirectResponse(url="/send")
+            return RedirectResponse(url="/subscription")
     return templates.TemplateResponse("login.html", {"request": request})
 
 
 @app.get("/subscription", response_class=HTMLResponse)
 async def subscription_page(request: Request):
-    if not has_saved_settings():
-        return RedirectResponse(url="/login")
+    user_email = require_login(request)
     
     # Check if user has active subscription, redirect to send page if they do
-    settings = get_settings()
-    gmail_email = settings.get("gmail_email") if settings else None
-    if gmail_email and (is_subscription_active(gmail_email) or is_subscription_check_disabled()):
+    if is_subscription_active(user_email) or is_subscription_check_disabled():
         return RedirectResponse(url="/send")
     
     return templates.TemplateResponse("subscription.html", {"request": request})
@@ -292,20 +402,17 @@ async def subscription_page(request: Request):
 
 @app.get("/send", response_class=HTMLResponse)
 async def send_page(request: Request):
-    if not has_saved_settings():
-        return RedirectResponse(url="/login")
+    user_email = require_login(request)
 
     # Check subscription for specific user
-    settings = get_settings()
-    gmail_email = settings.get("gmail_email") if settings else None
-    if not (is_subscription_active(gmail_email) or is_subscription_check_disabled()):
+    if not (is_subscription_active(user_email) or is_subscription_check_disabled()):
         return RedirectResponse(url="/subscription")
 
     return templates.TemplateResponse(
         "send.html",
         {
             "request": request,
-            "subscription_active": is_subscription_active(gmail_email),
+            "subscription_active": is_subscription_active(user_email),
             "dev_mode": is_subscription_check_disabled(),
         },
     )
@@ -345,93 +452,93 @@ async def api_subscription(gmail_email: str = None):
 
 
 @app.post("/api/subscription/pay")
-async def api_subscription_pay(payload: SubscriptionPayRequest):
-    # Get plan details
+async def api_subscription_pay(request: Request, payload: SubscriptionPayRequest):
     plan = get_plan(payload.plan_id)
     if not plan:
         return {"success": False, "message": "Invalid plan selected"}
-    
-    # Get user email from settings
-    settings = get_settings()
-    gmail_email = settings.get("gmail_email") if settings else None
-    
+
+    settings = get_settings() or {}
+    gmail_email = get_current_user(request) or settings.get("gmail_email")
+    try:
+        normalized_phone = normalize_phone_number(payload.phone_number)
+    except ValueError as exc:
+        return {"success": False, "message": str(exc)}
+
     checkout_request_id = f"checkout_{int(datetime.now(timezone.utc).timestamp())}"
     add_payment_attempt(
         checkout_request_id=checkout_request_id,
-        phone_number=payload.phone_number,
+        phone_number=normalized_phone,
         status="Pending",
         plan_id=payload.plan_id,
         amount=plan["price"],
         gmail_email=gmail_email,
     )
-    add_log(f"Payment initiated for {payload.phone_number} - Plan: {plan['name']} (KES {plan['price']})")
+    add_log(f"Payment initiated for {normalized_phone} - Plan: {plan['name']} (KES {plan['price']})")
 
     try:
-        mpesa_response = initiate_mpesa_stk_push(payload.phone_number, amount=plan["price"])
-        add_log(f"MPESA STK Push sent for {payload.phone_number} - KES {plan['price']}")
+        mpesa_response = initiate_mpesa_stk_push(normalized_phone, amount=plan["price"])
+        add_log(f"MPESA STK Push sent for {normalized_phone} - KES {plan['price']}")
         return {
             "success": True,
-            "message": "MPESA STK Push initiated. Confirm status using the callback or manual confirmation.",
+            "message": "MPESA STK Push initiated. Complete the prompt on your phone to activate the subscription.",
             "checkout_request_id": checkout_request_id,
             "mpesa_response": mpesa_response,
             "plan": plan,
         }
     except Exception as exc:
-        add_log(f"MPESA initiation fallback: {exc}")
+        add_log(f"MPESA initiation failed: {exc}")
         return {
-            "success": True,
-            "message": f"MPESA initiation could not be completed automatically: {exc}. Use manual confirmation with checkout_request_id.",
+            "success": False,
+            "message": f"MPESA payment could not be started: {exc}",
             "checkout_request_id": checkout_request_id,
             "plan": plan,
         }
 
 
 @app.post("/api/subscription/confirm")
-async def api_subscription_confirm(payload: SubscriptionConfirmRequest):
-    status = payload.status.lower()
+async def api_subscription_confirm(request: Request):
+    payload = await request.json()
     notification_manager = get_notification_manager()
-    
+
+    callback = payload.get("Body", {}).get("stkCallback") if isinstance(payload, dict) else None
+    if callback:
+        checkout_request_id = callback.get("CheckoutRequestID") or callback.get("MerchantRequestID")
+        result_code = callback.get("ResultCode")
+        result_desc = callback.get("ResultDesc", "No description provided")
+        status = "success" if result_code == 0 else "failed"
+    else:
+        checkout_request_id = payload.get("checkout_request_id")
+        status = str(payload.get("status", "")).lower()
+        result_desc = payload.get("message", "No description provided")
+
     if status != "success":
-        update_payment_attempt(payload.checkout_request_id, "Failed")
-        add_log(f"Payment confirmation failed for {payload.checkout_request_id}")
+        if checkout_request_id:
+            update_payment_attempt(checkout_request_id, "Failed")
+            add_log(f"Payment confirmation failed for {checkout_request_id}: {result_desc}")
         notification_manager.add_payment_notification(success=False)
         return {"success": False, "message": "Payment did not succeed."}
 
-    # Get payment details to retrieve plan information
-    payment = get_payment(payload.checkout_request_id)
+    payment = get_payment(checkout_request_id) if checkout_request_id else None
     if not payment or not payment.get("plan_id"):
-        update_payment_attempt(payload.checkout_request_id, "Failed")
-        add_log(f"Payment confirmation failed: No plan found for {payload.checkout_request_id}")
+        if checkout_request_id:
+            update_payment_attempt(checkout_request_id, "Failed")
+            add_log(f"Payment confirmation failed: No plan found for {checkout_request_id}")
         return {"success": False, "message": "Invalid payment: No plan associated."}
-    
+
     plan = get_plan(payment["plan_id"])
     if not plan:
-        update_payment_attempt(payload.checkout_request_id, "Failed")
+        update_payment_attempt(checkout_request_id, "Failed")
         add_log(f"Payment confirmation failed: Invalid plan ID {payment['plan_id']}")
         return {"success": False, "message": "Invalid plan."}
-    
-    # Calculate expiry based on plan duration
-    expiry = datetime.now(timezone.utc) + timedelta(days=plan["duration_days"])
-    start_date = datetime.now(timezone.utc).isoformat()
-    gmail_email = payment.get("gmail_email")
-    
-    set_subscription(
-        expiry.isoformat(), 
-        True, 
-        plan_id=plan["id"], 
-        amount_paid=plan["price"],
-        start_date=start_date,
-        gmail_email=gmail_email
+
+    result = activate_subscription_for_payment(
+        checkout_request_id=checkout_request_id,
+        gmail_email=payment.get("gmail_email"),
+        plan=plan,
+        amount=payment.get("amount") or plan["price"],
     )
-    update_payment_attempt(payload.checkout_request_id, "Success", plan_id=plan["id"], amount=plan["price"])
-    add_log(f"Subscription activated - Plan: {plan['name']} until {expiry.isoformat()}")
     notification_manager.add_payment_notification(success=True, amount=plan["price"], plan_name=plan["name"])
-    return {
-        "success": True,
-        "message": f"Subscription activated with {plan['name']} plan.",
-        "expiry": expiry.isoformat(),
-        "plan": plan,
-    }
+    return result
 
 
 @app.post("/api/subscription/callback")
@@ -444,7 +551,7 @@ async def api_subscription_callback(request: Request):
     checkout_request_id = callback.get("CheckoutRequestID") or callback.get("MerchantRequestID")
     result_code = callback.get("ResultCode")
     result_desc = callback.get("ResultDesc", "No description provided")
-    
+
     notification_manager = get_notification_manager()
 
     if result_code != 0:
@@ -453,36 +560,26 @@ async def api_subscription_callback(request: Request):
         notification_manager.add_payment_notification(success=False)
         return {"success": False, "message": f"Payment failed: {result_desc}"}
 
-    # Get payment details to retrieve plan information
     payment = get_payment(checkout_request_id)
     if not payment or not payment.get("plan_id"):
         update_payment_attempt(checkout_request_id, "Failed")
         add_log(f"MPESA callback failed: No plan found for {checkout_request_id}")
         return {"success": False, "message": "Invalid payment: No plan associated."}
-    
+
     plan = get_plan(payment["plan_id"])
     if not plan:
         update_payment_attempt(checkout_request_id, "Failed")
         add_log(f"MPESA callback failed: Invalid plan ID {payment['plan_id']}")
         return {"success": False, "message": "Invalid plan."}
-    
-    # Calculate expiry based on plan duration
-    expiry = datetime.now(timezone.utc) + timedelta(days=plan["duration_days"])
-    start_date = datetime.now(timezone.utc).isoformat()
-    gmail_email = payment.get("gmail_email")
-    
-    set_subscription(
-        expiry.isoformat(), 
-        True, 
-        plan_id=plan["id"], 
-        amount_paid=plan["price"],
-        start_date=start_date,
-        gmail_email=gmail_email
+
+    result = activate_subscription_for_payment(
+        checkout_request_id=checkout_request_id,
+        gmail_email=payment.get("gmail_email"),
+        plan=plan,
+        amount=payment.get("amount") or plan["price"],
     )
-    update_payment_attempt(checkout_request_id, "Success", plan_id=plan["id"], amount=plan["price"])
-    add_log(f"Subscription activated from callback - Plan: {plan['name']} until {expiry.isoformat()}")
     notification_manager.add_payment_notification(success=True, amount=plan["price"], plan_name=plan["name"])
-    return {"success": True, "message": f"Subscription activated via MPESA callback with {plan['name']} plan."}
+    return result
 
 
 def get_env_defaults():
@@ -564,6 +661,50 @@ async def api_post_config(payload: ConfigRequest):
     }
 
 
+@app.post("/api/login")
+async def api_login(request: Request, gmail_email: str = Form(...), password: str = Form(...)):
+    """Handle user login"""
+    # Truncate password to 72 bytes (bcrypt limit)
+    password = password[:72]
+    
+    # Check if user exists
+    user = get_user(gmail_email)
+    
+    if not user:
+        # Create new user if doesn't exist (first-time login)
+        password_hash = pwd_context.hash(password)
+        if not create_user(gmail_email, password_hash):
+            return JSONResponse(status_code=400, content={"success": False, "message": "Failed to create user"})
+        user = get_user(gmail_email)
+    
+    # Verify password
+    if not pwd_context.verify(password, user["password_hash"]):
+        return JSONResponse(status_code=401, content={"success": False, "message": "Invalid credentials"})
+    
+    # Set session
+    request.session["user_email"] = gmail_email
+    add_log(f"User logged in: {gmail_email}")
+    
+    # Check subscription status
+    has_active_subscription = is_subscription_active(gmail_email) or is_subscription_check_disabled()
+    
+    return {
+        "success": True,
+        "message": "Login successful",
+        "redirect": "/send" if has_active_subscription else "/subscription"
+    }
+
+
+@app.post("/api/logout")
+async def api_logout(request: Request):
+    """Handle user logout"""
+    user_email = request.session.get("user_email")
+    if user_email:
+        add_log(f"User logged out: {user_email}")
+    request.session.clear()
+    return {"success": True, "message": "Logged out successfully", "redirect": "/login"}
+
+
 def ensure_subscription_or_dev_mode():
     if is_subscription_check_disabled():
         return
@@ -586,6 +727,12 @@ async def api_send_single():
 @app.post("/api/send/batch")
 async def api_send_batch(payload: BatchRequest):
     ensure_subscription_or_dev_mode()
+    if payload.count > 20:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "Batch size is capped at 20 emails per send."},
+        )
+
     bot = get_bot_instance()
 
     def batch_target():
