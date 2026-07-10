@@ -48,7 +48,7 @@ class EmailTemplate:
         text = re.sub(self.ITALIC_PATTERN, r'<em>\1</em>', text)
         
         # Underline: __text__ -> <u>text</u>
-        text = re.sub(self.UNDERLINE_PATTERN, r'<u>\1</u>')
+        text = re.sub(self.UNDERLINE_PATTERN, r'<u>\1</u>', text)
         
         return text
     

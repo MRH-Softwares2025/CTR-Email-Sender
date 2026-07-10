@@ -38,6 +38,13 @@
             <p id="selectedPlanInfo" class="note">Please select a plan above</p>
             <div id="subscriptionMessage" class="message"></div>
 
+            <div id="manualConfirmSection" class="manual-confirm-section" style="display:none;">
+                <h3>Confirm Payment</h3>
+                <p>Your payment request ID: <strong id="checkoutRequestId">—</strong></p>
+                <p class="note">If the MPESA callback cannot reach this app, use this button once payment is completed.</p>
+                <button id="confirmPaymentButton" type="button" class="primary">Confirm Payment</button>
+            </div>
+
             <div class="navigation-links">
                 <a href="/send" id="sendPageLink" class="primary-link">Go to Email Sending</a>
                 <button id="resetButton" type="button" class="primary-link secondary">Start Over</button>

@@ -160,6 +160,50 @@ The mobile web UI provides:
 - Email statistics and activity log
 - Fixed recipient enforcement to `jesusislord.fmradio@gmail.com`
 
+## Production Deployment
+
+For production, keep `.env` out of source control and use the values from `.env.example`.
+
+### Using Gunicorn
+Install dependencies and run:
+```bash
+pip install -r requirements.txt
+gunicorn server:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8001
+```
+
+### Using the Procfile
+If you deploy to Render, Railway, or a similar host, the included `Procfile` starts the app properly:
+```text
+web: gunicorn server:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8001}
+```
+
+### Using Docker
+Build and run the container:
+```bash
+docker build -t jilr-email-sender .
+docker run -p 8001:8001 --env-file .env jilr-email-sender
+```
+
+### Using Docker Compose
+If you prefer Compose, use the included `docker-compose.yml`:
+```bash
+docker compose up --build
+```
+
+### Recommended production settings
+- `APP_ENV=production`
+- `DEBUG=false`
+- `HTTPS_ONLY=true`
+- `SESSION_SECURE=true`
+- `SECRET_KEY` set to a strong random value
+- `MPESA_CALLBACK_URL` set to your public HTTPS endpoint
+
+### Health check
+The app exposes a health endpoint at:
+```
+/health
+```
+
 ### Why use a virtual environment?
 - Keeps project dependencies isolated from global Python packages
 - Prevents version conflicts between projects

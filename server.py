@@ -81,12 +81,28 @@ def load_env_file():
 
 load_env_file()
 
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+DEBUG = os.getenv("DEBUG", "false").lower() in ("1", "true", "yes")
+SESSION_SECURE = os.getenv("SESSION_SECURE", "true" if APP_ENV == "production" else "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+SESSION_MAX_AGE = int(os.getenv("SESSION_MAX_AGE", "1209600"))
+HTTPS_ONLY = os.getenv("HTTPS_ONLY", "true" if APP_ENV == "production" else "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 app = FastAPI(docs_url=None, redoc_url=None)
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.getenv("SECRET_KEY", "your-secret-key-change-in-production"),
+    secret_key=os.getenv("SECRET_KEY", "change-me-in-production"),
+    session_cookie="session",
+    max_age=SESSION_MAX_AGE,
     same_site="lax",
-    https_only=False,
+    https_only=HTTPS_ONLY,
 )
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
@@ -146,6 +162,13 @@ def is_subscription_check_disabled():
 
 
 def is_subscription_active(gmail_email=None):
+    if not gmail_email:
+        settings = get_settings() or {}
+        gmail_email = settings.get("gmail_email")
+
+    if not gmail_email:
+        return False
+
     record = get_subscription(gmail_email)
     if not record or not record.get("expiry"):
         return False
@@ -170,6 +193,10 @@ def require_login(request: Request):
 
 
 def get_subscription_response(gmail_email=None):
+    if not gmail_email:
+        settings = get_settings() or {}
+        gmail_email = settings.get("gmail_email")
+
     subscription = get_subscription(gmail_email)
     subscription_required = not is_subscription_check_disabled()
     if not subscription or not subscription.get("expiry"):
@@ -416,6 +443,16 @@ async def send_page(request: Request):
             "dev_mode": is_subscription_check_disabled(),
         },
     )
+
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "environment": APP_ENV,
+        "debug": DEBUG,
+        "running": bool(bot_thread and bot_thread.is_alive()),
+    }
 
 
 @app.get("/api/status")
@@ -705,19 +742,30 @@ async def api_logout(request: Request):
     return {"success": True, "message": "Logged out successfully", "redirect": "/login"}
 
 
-def ensure_subscription_or_dev_mode():
+def ensure_subscription_or_dev_mode(request: Request = None, gmail_email: str = None):
     if is_subscription_check_disabled():
         return
-    if not is_subscription_active():
+
+    resolved_email = gmail_email
+    if request is not None:
+        resolved_email = get_current_user(request)
+        if not resolved_email:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+    if not resolved_email:
+        settings = get_settings() or {}
+        resolved_email = settings.get("gmail_email")
+
+    if not is_subscription_active(resolved_email):
         raise HTTPException(
             status_code=403,
-            detail="Subscription inactive. Please activate via MPESA or set DISABLE_SUBSCRIPTION_CHECK=true for development.",
+            detail="Subscription inactive. Please activate via MPESA before sending emails.",
         )
 
 
 @app.post("/api/send/single")
-async def api_send_single():
-    ensure_subscription_or_dev_mode()
+async def api_send_single(request: Request):
+    ensure_subscription_or_dev_mode(request=request)
     bot = get_bot_instance()
     result = bot.send_email()
     add_log(result.get("message", "Single send executed"))
@@ -725,8 +773,8 @@ async def api_send_single():
 
 
 @app.post("/api/send/batch")
-async def api_send_batch(payload: BatchRequest):
-    ensure_subscription_or_dev_mode()
+async def api_send_batch(request: Request, payload: BatchRequest):
+    ensure_subscription_or_dev_mode(request=request)
     if payload.count > 20:
         return JSONResponse(
             status_code=400,
@@ -744,8 +792,8 @@ async def api_send_batch(payload: BatchRequest):
 
 
 @app.post("/api/send/continuous")
-async def api_send_continuous():
-    ensure_subscription_or_dev_mode()
+async def api_send_continuous(request: Request):
+    ensure_subscription_or_dev_mode(request=request)
     bot = get_bot_instance()
 
     def continuous_target():
@@ -757,8 +805,8 @@ async def api_send_continuous():
 
 
 @app.post("/api/send/stop")
-async def api_send_stop():
-    ensure_subscription_or_dev_mode()
+async def api_send_stop(request: Request):
+    ensure_subscription_or_dev_mode(request=request)
     bot = get_bot_instance()
     bot.request_stop()
     add_log("Stop requested")
@@ -829,5 +877,6 @@ async def api_mark_all_notifications_read():
 if __name__ == "__main__":
     import uvicorn
 
+    host = os.getenv("HOST", "0.0.0.0")
     port = int(os.getenv("PORT", "8001"))
-    uvicorn.run("server:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run("server:app", host=host, port=port, reload=False)

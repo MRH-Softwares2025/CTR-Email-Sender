@@ -10,9 +10,13 @@ const resetButton = document.getElementById("resetButton");
 const plansContainer = document.getElementById("plansContainer");
 const selectedPlanInfo = document.getElementById("selectedPlanInfo");
 const planName = document.getElementById("planName");
+const manualConfirmSection = document.getElementById("manualConfirmSection");
+const checkoutRequestIdElement = document.getElementById("checkoutRequestId");
+const confirmPaymentButton = document.getElementById("confirmPaymentButton");
 
 let selectedPlan = null;
 let plans = [];
+let activeCheckoutRequestId = null;
 
 async function apiGet(path) {
     const response = await fetch(path);
@@ -149,12 +153,37 @@ payButton.addEventListener("click", async () => {
         plan_id: selectedPlan.id
     });
     if (result.success) {
+        activeCheckoutRequestId = result.checkout_request_id || null;
+        checkoutRequestIdElement.textContent = activeCheckoutRequestId || "—";
+        manualConfirmSection.style.display = "block";
         showMessage(result.message || "Payment initiated. Please check your phone to complete the payment.");
         await loadSubscriptionState();
     } else {
         showMessage(result.message || "Payment initiation failed.", false);
     }
 });
+
+if (confirmPaymentButton) {
+    confirmPaymentButton.addEventListener("click", async () => {
+        if (!activeCheckoutRequestId) {
+            showMessage("No pending payment request to confirm.", false);
+            return;
+        }
+        const confirmResult = await apiPost("/api/subscription/confirm", {
+            checkout_request_id: activeCheckoutRequestId,
+            status: "success",
+            message: "Manual confirmation from the app",
+        });
+        if (confirmResult.success) {
+            showMessage(confirmResult.message || "Subscription activated successfully.");
+            manualConfirmSection.style.display = "none";
+            activeCheckoutRequestId = null;
+            await loadSubscriptionState();
+        } else {
+            showMessage(confirmResult.message || "Payment confirmation failed.", false);
+        }
+    });
+}
 
 if (resetButton) {
     resetButton.addEventListener("click", async () => {
