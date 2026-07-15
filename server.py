@@ -2,9 +2,12 @@ import base64
 import json
 import os
 import re
+import secrets
+import smtplib
 import threading
 import urllib.request
 from datetime import datetime, timezone, timedelta
+from email.mime.text import MIMEText
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request, Depends, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -31,6 +34,7 @@ from db import (
     get_payment,
     create_user,
     get_user,
+    update_user_password,
 )
 from email_automation import EmailAutomationBot, EmailAutomationConfig
 from notification_system import get_notification_manager, NotificationPriority
@@ -126,6 +130,9 @@ async def add_security_headers(request: Request, call_next):
 
 # Password hashing
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+# In-memory OTP store for password resets: {email: {"code": str, "expires": datetime}}
+_reset_tokens: dict = {}
 
 bot = None
 bot_thread = None
@@ -456,10 +463,11 @@ async def health_check():
 
 
 @app.get("/api/status")
-async def api_status():
+async def api_status(request: Request):
+    user_email = require_login(request)
     return {
         "running": bot_thread.is_alive() if bot_thread else False,
-        **get_subscription_response(),
+        **get_subscription_response(user_email),
     }
 
 
@@ -471,11 +479,10 @@ async def api_plans():
 
 
 @app.get("/api/subscription")
-async def api_subscription(gmail_email: str = None):
-    # Get gmail_email from settings if not provided
-    if not gmail_email:
-        settings = get_settings()
-        gmail_email = settings.get("gmail_email") if settings else None
+async def api_subscription(request: Request, gmail_email: str = None):
+    # Always use the logged-in user for subscription status in the web app.
+    # This avoids showing another account's subscription by mistake.
+    gmail_email = require_login(request)
     
     # Check subscription expiry and generate notifications
     subscription = get_subscription(gmail_email)
@@ -701,6 +708,10 @@ async def api_post_config(payload: ConfigRequest):
 @app.post("/api/login")
 async def api_login(request: Request, gmail_email: str = Form(...), password: str = Form(...)):
     """Handle user login"""
+    gmail_email = (gmail_email or "").strip().lower()
+    if not gmail_email:
+        return JSONResponse(status_code=400, content={"success": False, "message": "Gmail address is required"})
+
     # Truncate password to 72 bytes (bcrypt limit)
     password = password[:72]
     
@@ -712,6 +723,13 @@ async def api_login(request: Request, gmail_email: str = Form(...), password: st
         password_hash = pwd_context.hash(password)
         if not create_user(gmail_email, password_hash):
             return JSONResponse(status_code=400, content={"success": False, "message": "Failed to create user"})
+        user = get_user(gmail_email)
+
+    if not user or not user.get("password_hash"):
+        # Self-heal legacy users missing password hashes by setting current password.
+        repaired_hash = pwd_context.hash(password)
+        if not update_user_password(gmail_email, repaired_hash):
+            return JSONResponse(status_code=400, content={"success": False, "message": "Account setup failed. Try again."})
         user = get_user(gmail_email)
     
     # Verify password
@@ -740,6 +758,95 @@ async def api_logout(request: Request):
         add_log(f"User logged out: {user_email}")
     request.session.clear()
     return {"success": True, "message": "Logged out successfully", "redirect": "/login"}
+
+
+@app.post("/api/forgot-password")
+async def api_forgot_password(gmail_email: str = Form(...)):
+    """Send a 6-digit OTP to the user's Gmail for password reset."""
+    gmail_email = (gmail_email or "").strip().lower()
+    if not gmail_email:
+        return JSONResponse(status_code=400, content={"success": False, "message": "Gmail address is required"})
+
+    user = get_user(gmail_email)
+    # Always return success to avoid user enumeration
+    if not user:
+        return {"success": True, "message": "If that address is registered, a reset code has been sent."}
+
+    settings = get_settings() or {}
+    smtp_password = str(settings.get("app_password") or os.getenv("GMAIL_APP_PASSWORD") or "")
+    smtp_email = str(settings.get("gmail_email") or os.getenv("GMAIL_EMAIL") or "")
+    if not smtp_password or not smtp_email:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "message": "No SMTP credentials configured. Save Gmail + App Password in Settings first.",
+            },
+        )
+
+    otp = str(secrets.randbelow(1_000_000)).zfill(6)
+    _reset_tokens[gmail_email.lower()] = {
+        "code": otp,
+        "expires": datetime.now(timezone.utc) + timedelta(minutes=15),
+    }
+
+    try:
+        msg = MIMEText(
+            f"Your password-reset code is: {otp}\n\nThis code expires in 15 minutes.\n"
+            f"If you did not request this, ignore this message."
+        )
+        msg["Subject"] = "Email Automation — Password Reset Code"
+        msg["From"] = smtp_email
+        msg["To"] = gmail_email
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as server:
+            server.starttls()
+            server.login(smtp_email, smtp_password)
+            server.send_message(msg)
+    except Exception as exc:
+        add_log(f"Password reset email failed for {gmail_email}: {exc}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": "Failed to send reset email. Check your SMTP credentials in settings."},
+        )
+
+    add_log(f"Password reset OTP sent to {gmail_email}")
+    return {"success": True, "message": "Reset code sent. Check your inbox."}
+
+
+@app.post("/api/reset-password")
+async def api_reset_password(
+    gmail_email: str = Form(...),
+    otp: str = Form(...),
+    new_password: str = Form(...),
+):
+    """Verify OTP and update password."""
+    gmail_email = (gmail_email or "").strip().lower()
+    if not gmail_email:
+        return JSONResponse(status_code=400, content={"success": False, "message": "Gmail address is required"})
+
+    new_password = new_password[:72]
+    key = gmail_email.lower()
+    token_data = _reset_tokens.get(key)
+
+    if not token_data:
+        return JSONResponse(status_code=400, content={"success": False, "message": "No reset code found. Request a new one."})
+
+    if datetime.now(timezone.utc) > token_data["expires"]:
+        _reset_tokens.pop(key, None)
+        return JSONResponse(status_code=400, content={"success": False, "message": "Reset code has expired. Request a new one."})
+
+    if not secrets.compare_digest(token_data["code"], otp.strip()):
+        return JSONResponse(status_code=400, content={"success": False, "message": "Invalid reset code."})
+
+    new_hash = pwd_context.hash(new_password)
+    if not update_user_password(gmail_email, new_hash):
+        return JSONResponse(status_code=400, content={"success": False, "message": "User not found."})
+
+    _reset_tokens.pop(key, None)
+    add_log(f"Password reset completed for {gmail_email}")
+    return {"success": True, "message": "Password updated successfully. You can now log in."}
+
+
 
 
 def ensure_subscription_or_dev_mode(request: Request = None, gmail_email: str = None):

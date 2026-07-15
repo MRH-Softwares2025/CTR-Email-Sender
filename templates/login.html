@@ -10,7 +10,7 @@
     <div class="container">
         <header>
             <h1>Login</h1>
-            <p>Enter your Gmail details to continue.</p>
+            <p>Enter your Gmail address and choose your own password for this app.</p>
         </header>
 
         <section class="card">
@@ -19,9 +19,9 @@
                 <label for="gmailEmail">Gmail Address</label>
                 <input id="gmailEmail" name="gmail_email" type="email" required />
 
-                <label for="loginPassword">Password</label>
+                <label for="loginPassword">App Password</label>
                 <div class="password-field">
-                    <input id="loginPassword" name="password" type="password" required placeholder="Create a password for this app" />
+                    <input id="loginPassword" name="password" type="password" required placeholder="Choose any password for this app" />
                     <button id="passwordToggleButton" type="button" class="password-toggle" aria-label="Show or hide password">
                         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                             <path d="M12 5c-5 0-9.27 3.11-11 7 1.73 3.89 6 7 11 7s9.27-3.11 11-7c-1.73-3.89-6-7-11-7zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8.5c-1.93 0-3.5 1.57-3.5 3.5S10.07 15.5 12 15.5 15.5 13.93 15.5 12 13.93 8.5 12 8.5z" fill="currentColor" />
@@ -33,21 +33,50 @@
                 <div id="loginMessage" class="message"></div>
             </form>
 
-            <p class="note">First time? Enter your Gmail and create a password. Your password will be hashed and stored securely.</p>
+            <p class="note">First time? Enter your Gmail and pick any password you like — it has nothing to do with your Google account password. It will be hashed and stored securely.</p>
+            <p style="text-align:center;margin-top:0.5rem"><a href="#" id="forgotPasswordLink">Forgot password?</a></p>
+        </section>
 
-            <div class="app-password-help">
-                <strong>Need a Gmail App Password?</strong>
-                <p>Use a Google App Password for SMTP instead of your normal login password.</p>
-                <ol>
-                    <li>Open <a href="https://myaccount.google.com/security" target="_blank" rel="noreferrer">Google Account Security</a>.</li>
-                    <li>Enable <strong>2-Step Verification</strong>.</li>
-                    <li>Choose <strong>App Passwords</strong>.</li>
-                    <li>Generate a password for <strong>Mail</strong>, then paste it here.</li>
-                </ol>
+        <!-- Forgot password panel (hidden by default) -->
+        <section class="card" id="forgotPanel" style="display:none">
+            <h2>Reset Password</h2>
+
+            <!-- Step 1: request OTP -->
+            <div id="forgotStep1">
+                <form id="forgotForm">
+                    <label for="forgotEmail">Gmail Address</label>
+                    <input id="forgotEmail" name="gmail_email" type="email" required placeholder="you@gmail.com" />
+                    <button type="submit" class="primary">Send Reset Code</button>
+                    <div id="forgotMessage" class="message"></div>
+                </form>
             </div>
+
+            <!-- Step 2: enter OTP + new password -->
+            <div id="forgotStep2" style="display:none">
+                <form id="resetForm">
+                    <label for="resetOtp">6-Digit Code</label>
+                    <input id="resetOtp" name="otp" type="text" inputmode="numeric" maxlength="6" required placeholder="______" />
+
+                    <label for="resetNewPassword">New Password</label>
+                    <div class="password-field">
+                        <input id="resetNewPassword" name="new_password" type="password" required placeholder="Enter your new password" />
+                        <button type="button" class="password-toggle" id="resetPasswordToggle" aria-label="Show or hide password">
+                            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                                <path d="M12 5c-5 0-9.27 3.11-11 7 1.73 3.89 6 7 11 7s9.27-3.11 11-7c-1.73-3.89-6-7-11-7zm0 12c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8.5c-1.93 0-3.5 1.57-3.5 3.5S10.07 15.5 12 15.5 15.5 13.93 15.5 12 13.93 8.5 12 8.5z" fill="currentColor" />
+                            </svg>
+                        </button>
+                    </div>
+
+                    <button type="submit" class="primary">Reset Password</button>
+                    <div id="resetMessage" class="message"></div>
+                </form>
+                <p style="text-align:center;margin-top:0.5rem"><a href="#" id="resendCodeLink">Resend code</a></p>
+            </div>
+
+            <p style="text-align:center;margin-top:0.75rem"><a href="#" id="backToLoginLink">← Back to Login</a></p>
         </section>
     </div>
 
-    <script src="/static/login.js?v=2"></script>
+    <script src="/static/login.js?v=4"></script>
 </body>
 </html>
