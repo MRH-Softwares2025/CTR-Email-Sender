@@ -733,7 +733,13 @@ async def api_login(request: Request, gmail_email: str = Form(...), password: st
         user = get_user(gmail_email)
     
     # Verify password
-    if not pwd_context.verify(password, user["password_hash"]):
+    try:
+        password_ok = pwd_context.verify(password, user["password_hash"])
+    except Exception:
+        # Do not leak hashing/backend details to clients.
+        return JSONResponse(status_code=401, content={"success": False, "message": "Invalid credentials"})
+
+    if not password_ok:
         return JSONResponse(status_code=401, content={"success": False, "message": "Invalid credentials"})
     
     # Set session

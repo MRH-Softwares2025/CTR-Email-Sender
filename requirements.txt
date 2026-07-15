@@ -8,6 +8,7 @@ python-dotenv==1.0.0
 # Desktop packaging dependency only (not needed on Linux hosts like Render)
 pyinstaller==6.21.0; platform_system == "Windows"
 passlib[bcrypt]==1.7.4
+argon2-cffi==23.1.0
 python-multipart==0.0.9
 firebase-admin==6.5.0
 google-cloud-firestore==2.16.1
