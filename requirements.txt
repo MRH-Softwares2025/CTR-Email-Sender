@@ -5,7 +5,8 @@ jinja2==3.1.2
 pydantic==2.8.0
 schedule==1.2.0
 python-dotenv==1.0.0
-pyinstaller==6.11.0
+# Desktop packaging dependency only (not needed on Linux hosts like Render)
+pyinstaller==6.21.0; platform_system == "Windows"
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.9
 firebase-admin==6.5.0
