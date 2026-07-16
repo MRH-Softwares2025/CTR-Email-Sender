@@ -40,9 +40,9 @@
 
 ### 1. **Exposed Credentials in .env** ⚠️ CRITICAL
 The `.env` file contains real, working credentials:
-- `GMAIL_APP_PASSWORD=wadrbiezspxzongg` (16-char app password)
-- `MPESA_CONSUMER_KEY=5nRpGjGSECCUzQ6KX2LgHzzgOL8FluSFvKtnxmRi91SA8ItH`
-- `MPESA_CONSUMER_SECRET=nNljAMf2w43tGNnEJdJLgBIanmXoIVU0oPpOZoGGDBaiRKpi2vsckyEZLyqPjcVX`
+- `GMAIL_APP_PASSWORD=<REDACTED>` (16-char app password)
+- `MPESA_CONSUMER_KEY=<REDACTED>`
+- `MPESA_CONSUMER_SECRET=<REDACTED>`
 
 **Action Required**: Immediately rotate these credentials and remove from version control.
 
