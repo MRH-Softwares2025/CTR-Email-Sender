@@ -16,6 +16,12 @@ const emailsSentTotal = document.getElementById("emailsSentTotal");
 const failedEmails = document.getElementById("failedEmails");
 const dailyLimit = document.getElementById("dailyLimit");
 const activityLog = document.getElementById("activityLog");
+const oauthStatus = document.getElementById("oauthStatus");
+const connectGoogleButton = document.getElementById("connectGoogleButton");
+const disconnectGoogleButton = document.getElementById("disconnectGoogleButton");
+
+let oauthConnected = false;
+let subscriptionAllowsSending = false;
 
 // Notification elements
 const notificationBell = document.getElementById("notificationBell");
@@ -53,6 +59,10 @@ function setActionState(enabled) {
     if (stopButton) stopButton.disabled = !enabled;
 }
 
+function syncSendActionState() {
+    setActionState(subscriptionAllowsSending && oauthConnected);
+}
+
 function showMessage(container, text, success = true) {
     container.textContent = text;
     container.className = `message ${success ? "success" : "error"}`;
@@ -83,7 +93,8 @@ function updateSubscriptionUI(data) {
     }
     expiryDate.textContent = data.expiry || "Not set";
     daysLeft.textContent = data.days_left ?? 0;
-    setActionState(data.active || !isRequired);
+    subscriptionAllowsSending = data.active || !isRequired;
+    syncSendActionState();
 }
 
 function updateSettingsUI(data) {
@@ -94,6 +105,21 @@ function updateSettingsUI(data) {
     document.getElementById("endHour").value = data.end_hour ?? 23;
     document.getElementById("emailsPerHour").value = data.emails_per_hour || 125;
     document.getElementById("timeVariation").value = data.time_variation_seconds || 300;
+}
+
+function updateOAuthUI(data) {
+    oauthConnected = Boolean(data && data.connected);
+    const email = data && data.gmail_email ? data.gmail_email : "";
+
+    if (oauthStatus) {
+        oauthStatus.textContent = oauthConnected
+            ? `Connected to Google as ${email}`
+            : "Google not connected. Connect Gmail to enable sending.";
+    }
+
+    if (connectGoogleButton) connectGoogleButton.disabled = oauthConnected;
+    if (disconnectGoogleButton) disconnectGoogleButton.disabled = !oauthConnected;
+    syncSendActionState();
 }
 
 function updateStatsUI(data) {
@@ -112,6 +138,9 @@ function updateLogsUI(logs) {
 async function loadPageState() {
     const subscription = await apiGet("/api/subscription");
     updateSubscriptionUI(subscription);
+
+    const oauth = await apiGet("/api/oauth/google/status");
+    updateOAuthUI(oauth);
 
     const config = await apiGet("/api/config");
     updateSettingsUI(config);
@@ -315,6 +344,20 @@ if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", loadPageState);
 } else {
     loadPageState();
+}
+
+if (connectGoogleButton) {
+    connectGoogleButton.addEventListener("click", () => {
+        window.location.href = "/api/oauth/google/start";
+    });
+}
+
+if (disconnectGoogleButton) {
+    disconnectGoogleButton.addEventListener("click", async () => {
+        const result = await apiPost("/api/oauth/google/disconnect", {});
+        showMessage(configMessage, result.message || "Google account disconnected.", result.success !== false);
+        await loadPageState();
+    });
 }
 
 const logoutButton = document.getElementById("logoutButton");

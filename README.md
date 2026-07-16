@@ -1,6 +1,6 @@
 # Email Automation Bot
 
-A Python-based email automation tool that sends multiple emails to a single recipient with time variations using Gmail SMTP and app password authentication.
+A Python-based email automation tool that sends multiple emails to a single recipient with time variations. It supports per-user Gmail OAuth (recommended) and Gmail SMTP app-password fallback.
 
 ## Features
 
@@ -16,8 +16,26 @@ A Python-based email automation tool that sends multiple emails to a single reci
 ## Prerequisites
 
 - Python 3.7 or higher
-- Gmail account with App Password enabled
+- Google Cloud OAuth credentials (recommended for multi-user/public deployments)
+- Optional: Gmail App Password enabled (fallback mode)
 - Recipient consent for automated emails
+
+## Google OAuth Setup (Per User, Recommended)
+
+1. Open Google Cloud Console and select your project.
+2. Enable APIs:
+  - Gmail API
+  - Google OAuth2 API
+3. Configure OAuth consent screen.
+4. Create OAuth 2.0 Client ID (Web application).
+5. Add Authorized redirect URI:
+  - https://YOUR-RENDER-SERVICE.onrender.com/api/oauth/google/callback
+6. Add these environment variables:
+  - GOOGLE_OAUTH_CLIENT_ID
+  - GOOGLE_OAUTH_CLIENT_SECRET
+  - GOOGLE_OAUTH_REDIRECT_URI (optional if it matches the default callback path)
+
+After deployment, each logged-in user can connect their own Gmail from the Send page by clicking Connect Gmail.
 
 ## Setup Instructions
 

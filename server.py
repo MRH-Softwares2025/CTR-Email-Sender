@@ -5,10 +5,12 @@ import re
 import secrets
 import smtplib
 import threading
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from pathlib import Path
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, Depends, Form
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -34,9 +36,19 @@ from db import (
     get_payment,
     create_user,
     get_user,
+    get_user_oauth_credentials,
+    save_user_oauth_credentials,
+    clear_user_oauth_credentials,
     update_user_password,
 )
 from email_automation import EmailAutomationBot, EmailAutomationConfig
+from gmail_oauth import (
+    build_authorization_url,
+    build_redirect_uri,
+    credentials_from_dict,
+    exchange_code_for_token,
+    fetch_account_email,
+)
 from notification_system import get_notification_manager, NotificationPriority
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -129,7 +141,8 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 # Password hashing
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+# Keep bcrypt for backward compatibility with legacy accounts, but prefer argon2 for new hashes.
+pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 
 # In-memory OTP store for password resets: {email: {"code": str, "expires": datetime}}
 _reset_tokens: dict = {}
@@ -333,9 +346,12 @@ def initiate_mpesa_stk_push(phone_number: str, amount: str = "100"):
         return json.loads(body)
 
 
-def activate_subscription_for_payment(checkout_request_id: str, gmail_email: str, plan: dict, amount: int):
+def activate_subscription_for_payment(checkout_request_id: Optional[str], gmail_email: Optional[str], plan: dict, amount: int):
     expiry = datetime.now(timezone.utc) + timedelta(days=plan["duration_days"])
     start_date = datetime.now(timezone.utc).isoformat()
+    if not gmail_email:
+        raise RuntimeError("Payment has no associated Gmail account")
+
     set_subscription(
         expiry.isoformat(),
         True,
@@ -344,7 +360,8 @@ def activate_subscription_for_payment(checkout_request_id: str, gmail_email: str
         start_date=start_date,
         gmail_email=gmail_email,
     )
-    update_payment_attempt(checkout_request_id, "Success", plan_id=plan["id"], amount=amount)
+    if checkout_request_id:
+        update_payment_attempt(checkout_request_id, "Success", plan_id=plan["id"], amount=amount)
     add_log(f"Subscription activated - Plan: {plan['name']} until {expiry.isoformat()}")
     return {
         "success": True,
@@ -356,30 +373,61 @@ def activate_subscription_for_payment(checkout_request_id: str, gmail_email: str
 
 def load_bot_config():
     settings = get_settings() or {}
+    oauth_credentials = get_user_oauth_credentials(settings.get("gmail_email", "")) if settings.get("gmail_email") else None
     config = EmailAutomationConfig(
-        gmail_email=settings.get("gmail_email", os.getenv("GMAIL_EMAIL", "")),
-        app_password=settings.get("app_password", os.getenv("GMAIL_APP_PASSWORD", "")),
-        email_subject=settings.get("email_subject", os.getenv("EMAIL_SUBJECT", "Automated Email")),
-        email_body=settings.get("email_body", os.getenv("EMAIL_BODY", "This is an automated email.")),
-        start_hour=int(settings.get("start_hour", os.getenv("START_HOUR", "9"))),
-        end_hour=int(settings.get("end_hour", os.getenv("END_HOUR", "17"))),
-        emails_per_hour=int(settings.get("emails_per_hour", os.getenv("EMAILS_PER_HOUR", "125"))),
-        time_variation_seconds=float(settings.get("time_variation_seconds", os.getenv("TIME_VARIATION_SECONDS", "300"))),
+        gmail_email=str(settings.get("gmail_email") or os.getenv("GMAIL_EMAIL") or "").strip().lower(),
+        app_password=str(settings.get("app_password") or os.getenv("GMAIL_APP_PASSWORD") or ""),
+        oauth_credentials=oauth_credentials,
+        email_subject=str(settings.get("email_subject") or os.getenv("EMAIL_SUBJECT") or "Automated Email"),
+        email_body=str(settings.get("email_body") or os.getenv("EMAIL_BODY") or "This is an automated email."),
+        start_hour=int(settings.get("start_hour") or os.getenv("START_HOUR") or "9"),
+        end_hour=int(settings.get("end_hour") or os.getenv("END_HOUR") or "17"),
+        emails_per_hour=int(settings.get("emails_per_hour") or os.getenv("EMAILS_PER_HOUR") or "125"),
+        time_variation_seconds=float(settings.get("time_variation_seconds") or os.getenv("TIME_VARIATION_SECONDS") or "300"),
+    )
+    return config
+
+
+def _request_base_url(request: Request):
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https").split(",")[0].strip()
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc).split(",")[0].strip()
+    return f"{proto}://{host}"
+
+
+def load_user_bot_config(user_email: str):
+    settings = get_settings() or {}
+    oauth_credentials = get_user_oauth_credentials(user_email)
+
+    config = EmailAutomationConfig(
+        gmail_email=user_email,
+        app_password=str(settings.get("app_password") or os.getenv("GMAIL_APP_PASSWORD") or ""),
+        oauth_credentials=oauth_credentials,
+        email_subject=str(settings.get("email_subject") or os.getenv("EMAIL_SUBJECT") or "Automated Email"),
+        email_body=str(settings.get("email_body") or os.getenv("EMAIL_BODY") or "This is an automated email."),
+        start_hour=int(settings.get("start_hour") or os.getenv("START_HOUR") or "9"),
+        end_hour=int(settings.get("end_hour") or os.getenv("END_HOUR") or "17"),
+        emails_per_hour=int(settings.get("emails_per_hour") or os.getenv("EMAILS_PER_HOUR") or "125"),
+        time_variation_seconds=float(settings.get("time_variation_seconds") or os.getenv("TIME_VARIATION_SECONDS") or "300"),
     )
     return config
 
 
 def get_bot_instance():
+    config = load_bot_config()
+    return EmailAutomationBot(config)
+
+
+def get_user_bot_instance(user_email: str):
     global bot
-    if bot is None:
-        config = load_bot_config()
-        bot = EmailAutomationBot(config)
+    config = load_user_bot_config(user_email)
+    bot = EmailAutomationBot(config)
     return bot
 
 
 def has_saved_settings():
     settings = get_settings() or {}
-    return bool(settings.get("gmail_email")) and bool(settings.get("app_password"))
+    gmail_email = settings.get("gmail_email")
+    return bool(gmail_email) and (bool(settings.get("app_password")) or bool(get_user_oauth_credentials(gmail_email)))
 
 
 def get_saved_settings():
@@ -479,7 +527,7 @@ async def api_plans():
 
 
 @app.get("/api/subscription")
-async def api_subscription(request: Request, gmail_email: str = None):
+async def api_subscription(request: Request, gmail_email: Optional[str] = None):
     # Always use the logged-in user for subscription status in the web app.
     # This avoids showing another account's subscription by mistake.
     gmail_email = require_login(request)
@@ -641,16 +689,85 @@ def resolve_config_payload(payload: ConfigRequest) -> dict:
     data = payload.dict()
     saved = get_settings() or {}
 
+    data["gmail_email"] = (data.get("gmail_email") or "").strip().lower()
+
     if not data.get("app_password"):
         data["app_password"] = saved.get("app_password") or os.getenv("GMAIL_APP_PASSWORD", "")
 
-    if not data.get("app_password"):
+    oauth_credentials = get_user_oauth_credentials(data["gmail_email"]) if data.get("gmail_email") else None
+
+    if not data.get("app_password") and not oauth_credentials:
         raise HTTPException(
             status_code=400,
-            detail="App password is required. Enter it on the login page or when changing credentials.",
+            detail="Connect Gmail OAuth first, or provide a Gmail app password.",
         )
 
     return data
+
+
+@app.get("/api/oauth/google/status")
+async def api_google_oauth_status(request: Request):
+    user_email = require_login(request)
+    credentials_payload = get_user_oauth_credentials(user_email)
+    return {
+        "connected": bool(credentials_payload),
+        "gmail_email": user_email,
+    }
+
+
+@app.get("/api/oauth/google/start")
+async def api_google_oauth_start(request: Request):
+    user_email = require_login(request)
+    state = secrets.token_urlsafe(24)
+    request.session["google_oauth_state"] = state
+    request.session["google_oauth_user"] = user_email
+
+    redirect_uri = build_redirect_uri(_request_base_url(request))
+    auth_url = build_authorization_url(redirect_uri=redirect_uri, state=state)
+    return RedirectResponse(url=auth_url)
+
+
+@app.get("/api/oauth/google/callback")
+async def api_google_oauth_callback(request: Request, state: str = "", code: str = "", error: str = ""):
+    if error:
+        add_log(f"Google OAuth failed: {error}")
+        return RedirectResponse(url="/send?oauth=failed")
+
+    expected_state = request.session.get("google_oauth_state")
+    user_email = request.session.get("google_oauth_user") or get_current_user(request)
+
+    request.session.pop("google_oauth_state", None)
+    request.session.pop("google_oauth_user", None)
+
+    if not expected_state or state != expected_state or not user_email:
+        add_log("Google OAuth callback rejected: invalid state or session")
+        return RedirectResponse(url="/send?oauth=failed")
+
+    try:
+        redirect_uri = build_redirect_uri(_request_base_url(request))
+        credentials_payload = exchange_code_for_token(code=code, state=state, redirect_uri=redirect_uri)
+        creds = credentials_from_dict(credentials_payload)
+        if creds is None:
+            raise RuntimeError("Unable to parse OAuth credentials")
+        account_email = fetch_account_email(creds)
+        if account_email != user_email:
+            add_log(f"Google OAuth mismatch: account={account_email}, user={user_email}")
+            return RedirectResponse(url="/send?oauth=email-mismatch")
+
+        save_user_oauth_credentials(user_email, credentials_payload)
+        add_log(f"Google OAuth connected for {user_email}")
+        return RedirectResponse(url="/send?oauth=connected")
+    except Exception as exc:
+        add_log(f"Google OAuth callback error: {exc}")
+        return RedirectResponse(url="/send?oauth=failed")
+
+
+@app.post("/api/oauth/google/disconnect")
+async def api_google_oauth_disconnect(request: Request):
+    user_email = require_login(request)
+    clear_user_oauth_credentials(user_email)
+    add_log(f"Google OAuth disconnected for {user_email}")
+    return {"success": True, "message": "Google account disconnected."}
 
 
 @app.get("/api/defaults")
@@ -659,11 +776,13 @@ async def api_defaults():
 
 
 @app.get("/api/config")
-async def api_get_config():
+async def api_get_config(request: Request):
+    user_email = require_login(request)
     settings = get_settings() or {}
     defaults = get_env_defaults()
+    oauth_connected = bool(get_user_oauth_credentials(user_email))
     return {
-        "gmail_email": settings.get("gmail_email", os.getenv("GMAIL_EMAIL", "")),
+        "gmail_email": user_email,
         "email_subject": settings.get("email_subject", defaults["email_subject"]),
         "email_body": settings.get("email_body", defaults["email_body"]),
         "start_hour": int(settings.get("start_hour", defaults["start_hour"])),
@@ -672,13 +791,17 @@ async def api_get_config():
         "time_variation_seconds": float(
             settings.get("time_variation_seconds", defaults["time_variation_seconds"])
         ),
+        "oauth_connected": oauth_connected,
     }
 
 
 @app.post("/api/config")
-async def api_post_config(payload: ConfigRequest):
+async def api_post_config(request: Request, payload: ConfigRequest):
+    user_email = require_login(request)
     try:
-        config_data = resolve_config_payload(payload)
+        raw = payload.dict()
+        raw["gmail_email"] = user_email
+        config_data = resolve_config_payload(ConfigRequest(**raw))
         new_bot = EmailAutomationBot(EmailAutomationConfig(**config_data))
     except HTTPException:
         raise
@@ -695,8 +818,7 @@ async def api_post_config(payload: ConfigRequest):
     add_log("Configuration saved and SMTP credentials verified")
     
     # Check if user has active subscription
-    gmail_email = payload.gmail_email
-    has_active_subscription = is_subscription_active(gmail_email) or is_subscription_check_disabled()
+    has_active_subscription = is_subscription_active(user_email) or is_subscription_check_disabled()
     
     return {
         "success": True, 
@@ -731,6 +853,9 @@ async def api_login(request: Request, gmail_email: str = Form(...), password: st
         if not update_user_password(gmail_email, repaired_hash):
             return JSONResponse(status_code=400, content={"success": False, "message": "Account setup failed. Try again."})
         user = get_user(gmail_email)
+
+    if not user or not user.get("password_hash"):
+        return JSONResponse(status_code=401, content={"success": False, "message": "Invalid credentials"})
     
     # Verify password
     try:
@@ -855,7 +980,7 @@ async def api_reset_password(
 
 
 
-def ensure_subscription_or_dev_mode(request: Request = None, gmail_email: str = None):
+def ensure_subscription_or_dev_mode(request: Optional[Request] = None, gmail_email: Optional[str] = None):
     if is_subscription_check_disabled():
         return
 
@@ -878,8 +1003,9 @@ def ensure_subscription_or_dev_mode(request: Request = None, gmail_email: str = 
 
 @app.post("/api/send/single")
 async def api_send_single(request: Request):
+    user_email = require_login(request)
     ensure_subscription_or_dev_mode(request=request)
-    bot = get_bot_instance()
+    bot = get_user_bot_instance(user_email)
     result = bot.send_email()
     add_log(result.get("message", "Single send executed"))
     return result
@@ -887,6 +1013,7 @@ async def api_send_single(request: Request):
 
 @app.post("/api/send/batch")
 async def api_send_batch(request: Request, payload: BatchRequest):
+    user_email = require_login(request)
     ensure_subscription_or_dev_mode(request=request)
     if payload.count > 20:
         return JSONResponse(
@@ -894,7 +1021,7 @@ async def api_send_batch(request: Request, payload: BatchRequest):
             content={"success": False, "message": "Batch size is capped at 20 emails per send."},
         )
 
-    bot = get_bot_instance()
+    bot = get_user_bot_instance(user_email)
 
     def batch_target():
         bot.send_batch(payload.count)
@@ -906,8 +1033,9 @@ async def api_send_batch(request: Request, payload: BatchRequest):
 
 @app.post("/api/send/continuous")
 async def api_send_continuous(request: Request):
+    user_email = require_login(request)
     ensure_subscription_or_dev_mode(request=request)
-    bot = get_bot_instance()
+    bot = get_user_bot_instance(user_email)
 
     def continuous_target():
         bot.run_continuous()
@@ -919,16 +1047,20 @@ async def api_send_continuous(request: Request):
 
 @app.post("/api/send/stop")
 async def api_send_stop(request: Request):
+    require_login(request)
     ensure_subscription_or_dev_mode(request=request)
-    bot = get_bot_instance()
+    global bot
+    if bot is None:
+        return {"success": True, "message": "No active send process."}
     bot.request_stop()
     add_log("Stop requested")
     return {"success": True, "message": "Send process stopped."}
 
 
 @app.get("/api/stats")
-async def api_stats():
-    bot = get_bot_instance()
+async def api_stats(request: Request):
+    user_email = require_login(request)
+    bot = get_user_bot_instance(user_email)
     return bot.get_statistics()
 
 

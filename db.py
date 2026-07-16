@@ -68,7 +68,9 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     gmail_email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
-    created_at TEXT
+    created_at TEXT,
+    oauth_credentials TEXT,
+    oauth_connected_at TEXT
 )
 """
 
@@ -200,8 +202,20 @@ def initialize_db():
         conn.execute(CREATE_SUBSCRIPTION_PLANS_TABLE)
         conn.execute(CREATE_PAYMENTS_TABLE)
         conn.execute(CREATE_LOGS_TABLE)
+        _ensure_sqlite_migrations(conn)
         conn.commit()
         initialize_default_plans()
+
+
+def _ensure_sqlite_migrations(conn):
+    """Apply additive SQLite schema updates for existing installations."""
+    cols = conn.execute("PRAGMA table_info(users)").fetchall()
+    names = {row[1] for row in cols}
+
+    if "oauth_credentials" not in names:
+        conn.execute("ALTER TABLE users ADD COLUMN oauth_credentials TEXT")
+    if "oauth_connected_at" not in names:
+        conn.execute("ALTER TABLE users ADD COLUMN oauth_connected_at TEXT")
 
 
 initialize_db()
@@ -580,6 +594,8 @@ def get_user(gmail_email):
             "gmail_email": data.get("gmail_email", gmail_email),
             "password_hash": data.get("password_hash"),
             "created_at": data.get("created_at"),
+            "oauth_credentials": data.get("oauth_credentials"),
+            "oauth_connected_at": data.get("oauth_connected_at"),
         }
 
     with get_connection() as conn:
@@ -591,6 +607,8 @@ def get_user(gmail_email):
             "gmail_email": row["gmail_email"],
             "password_hash": row["password_hash"],
             "created_at": row["created_at"],
+            "oauth_credentials": row["oauth_credentials"],
+            "oauth_connected_at": row["oauth_connected_at"],
         }
 
 
@@ -607,6 +625,66 @@ def update_user_password(gmail_email, new_password_hash):
         result = conn.execute(
             "UPDATE users SET password_hash = ? WHERE gmail_email = ?",
             (new_password_hash, gmail_email),
+        )
+        conn.commit()
+        return result.rowcount > 0
+
+
+def save_user_oauth_credentials(gmail_email, credentials_payload):
+    now = _now_iso()
+    if _BACKEND == "firestore":
+        db = _load_firestore_client()
+        doc_ref = db.collection("users").document(gmail_email)
+        if not doc_ref.get().exists:
+            return False
+        doc_ref.update({
+            "oauth_credentials": credentials_payload,
+            "oauth_connected_at": now,
+        })
+        return True
+
+    with get_connection() as conn:
+        result = conn.execute(
+            "UPDATE users SET oauth_credentials = ?, oauth_connected_at = ? WHERE gmail_email = ?",
+            (json.dumps(credentials_payload), now, gmail_email),
+        )
+        conn.commit()
+        return result.rowcount > 0
+
+
+def get_user_oauth_credentials(gmail_email):
+    if _BACKEND == "firestore":
+        db = _load_firestore_client()
+        doc = db.collection("users").document(gmail_email).get()
+        if not doc.exists:
+            return None
+        data = doc.to_dict() or {}
+        payload = data.get("oauth_credentials")
+        return payload if isinstance(payload, dict) else None
+
+    with get_connection() as conn:
+        row = conn.execute("SELECT oauth_credentials FROM users WHERE gmail_email = ?", (gmail_email,)).fetchone()
+        if not row or not row["oauth_credentials"]:
+            return None
+        try:
+            return json.loads(row["oauth_credentials"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+
+
+def clear_user_oauth_credentials(gmail_email):
+    if _BACKEND == "firestore":
+        db = _load_firestore_client()
+        doc_ref = db.collection("users").document(gmail_email)
+        if not doc_ref.get().exists:
+            return False
+        doc_ref.update({"oauth_credentials": None})
+        return True
+
+    with get_connection() as conn:
+        result = conn.execute(
+            "UPDATE users SET oauth_credentials = NULL WHERE gmail_email = ?",
+            (gmail_email,),
         )
         conn.commit()
         return result.rowcount > 0

@@ -49,8 +49,18 @@
                 <section class="card email-config-card">
                     <h2>Email Configuration</h2>
 
-                    <label for="gmailEmail">Gmail Address</label>
-                    <input id="gmailEmail" name="gmail_email" type="email" required />
+                    <div class="oauth-panel">
+                        <p><strong>Google Connection</strong></p>
+                        <p id="oauthStatus" class="note">Checking Google connection...</p>
+                        <div class="navigation-links">
+                            <button id="connectGoogleButton" type="button" class="primary-link">Connect Gmail</button>
+                            <button id="disconnectGoogleButton" type="button" class="primary-link secondary">Disconnect</button>
+                        </div>
+                    </div>
+
+                    <label for="gmailEmail">Gmail Address (Current Session)</label>
+                    <input id="gmailEmail" name="gmail_email" type="email" required readonly />
+                    <p class="note">This is always the Gmail account currently logged in.</p>
 
                     <label for="emailSubject">Email Subject</label>
                     <input id="emailSubject" name="email_subject" type="text" required />

@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import os
 from template_system import EmailTemplate, create_email_body
+from gmail_oauth import credentials_from_dict, fetch_account_email, send_gmail_message
 
 # Configure logging
 logging.basicConfig(
@@ -31,7 +32,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EmailAutomationConfig:
     gmail_email: str
-    app_password: str
+    app_password: str = ""
+    oauth_credentials: Optional[Dict[str, Any]] = None
     email_subject: str = 'Automated Email'
     email_body: str = 'This is an automated email.'
     start_hour: int = 9
@@ -46,6 +48,7 @@ class EmailAutomationBot:
     def __init__(self, config: EmailAutomationConfig):
         self.gmail_email = config.gmail_email
         self.app_password = config.app_password
+        self.oauth_credentials = config.oauth_credentials or None
         self.recipient_email = self.FIXED_RECIPIENT_EMAIL
         self.email_subject = config.email_subject
         self.email_body = config.email_body
@@ -66,8 +69,8 @@ class EmailAutomationBot:
         missing = []
         if not self.gmail_email:
             missing.append('gmail_email')
-        if not self.app_password:
-            missing.append('app_password')
+        if not self.app_password and not self.oauth_credentials:
+            missing.append('app_password_or_oauth')
         if not self.recipient_email:
             missing.append('recipient_email')
 
@@ -114,6 +117,20 @@ class EmailAutomationBot:
         return msg
 
     def verify_credentials(self):
+        if self.oauth_credentials:
+            try:
+                creds = credentials_from_dict(self.oauth_credentials)
+                account_email = fetch_account_email(creds)
+                if account_email and account_email != self.gmail_email.lower():
+                    message = 'Connected Google account does not match configured Gmail address.'
+                    logger.error(message)
+                    return {'success': False, 'message': message}
+                return {'success': True, 'message': 'Google OAuth credentials verified successfully.'}
+            except Exception as e:
+                message = f'OAuth credential check failed: {e}'
+                logger.error(message)
+                return {'success': False, 'message': message}
+
         try:
             with smtplib.SMTP('smtp.gmail.com', 587, timeout=30) as server:
                 server.starttls()
@@ -141,11 +158,27 @@ class EmailAutomationBot:
             return {'success': False, 'message': message}
 
         try:
-            msg = self._create_email(custom_subject, custom_body, template_variables, use_html)
-            with smtplib.SMTP('smtp.gmail.com', 587) as server:
-                server.starttls()
-                server.login(self.gmail_email, self.app_password)
-                server.send_message(msg)
+            if self.oauth_credentials:
+                body = custom_body or self.email_body
+                template = EmailTemplate(body)
+                if template_variables:
+                    template.set_variables(template_variables)
+                html_body = template.render(html=True)
+                plain_body = template.render_plain_text()
+                send_gmail_message(
+                    creds=credentials_from_dict(self.oauth_credentials),
+                    from_email=self.gmail_email,
+                    to_email=self.recipient_email,
+                    subject=custom_subject or self.email_subject,
+                    plain_body=plain_body,
+                    html_body=html_body if use_html else "",
+                )
+            else:
+                msg = self._create_email(custom_subject, custom_body, template_variables, use_html)
+                with smtplib.SMTP('smtp.gmail.com', 587) as server:
+                    server.starttls()
+                    server.login(self.gmail_email, self.app_password)
+                    server.send_message(msg)
             
             # Update counters
             self.emails_sent_today += 1
