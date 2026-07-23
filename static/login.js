@@ -150,7 +150,12 @@ if (resendCodeLink) {
         if (!_forgotEmail) return;
         showForgotMessage(resetMessage, "Resending…");
         const result = await sendResetCode(_forgotEmail);
-        showForgotMessage(resetMessage, result.message, result.success);
+        if (!result.success) {
+            const fallbackMessage = "We could not resend the code right now. Please contact support at listmeapp.rapture@gmail.com or 0707612865.";
+            showForgotMessage(resetMessage, result.message ? `${result.message}\n${fallbackMessage}` : fallbackMessage, false);
+        } else {
+            showForgotMessage(resetMessage, result.message, true);
+        }
     });
 }
 
