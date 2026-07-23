@@ -934,10 +934,11 @@ async def api_forgot_password(gmail_email: str = Form(...)):
             server.login(smtp_email, smtp_password)
             server.send_message(msg)
     except Exception as exc:
-        add_log(f"Password reset email failed for {gmail_email}: {exc}")
+        detail = str(exc).strip() or "SMTP send failed"
+        add_log(f"Password reset email failed for {gmail_email}: {detail}")
         return JSONResponse(
             status_code=500,
-            content={"success": False, "message": "Failed to send reset email. Check your SMTP credentials in settings."},
+            content={"success": False, "message": f"Failed to send reset email: {detail}"},
         )
 
     add_log(f"Password reset OTP sent to {gmail_email}")
