@@ -892,6 +892,29 @@ async def api_logout(request: Request):
     return {"success": True, "message": "Logged out successfully", "redirect": "/login"}
 
 
+@app.get("/api/debug/smtp")
+async def api_debug_smtp():
+    """Return a simple SMTP diagnostic for the current app configuration."""
+    settings = get_settings() or {}
+    smtp_email, smtp_password = resolve_smtp_credentials(settings, os.environ)
+    details = {
+        "configured_email_present": bool(smtp_email),
+        "configured_password_present": bool(smtp_password),
+        "source": "settings" if (settings.get("gmail_email") or settings.get("app_password")) else "environment" if (os.getenv("GMAIL_EMAIL") or os.getenv("GMAIL_APP_PASSWORD")) else "none",
+    }
+
+    if not smtp_email or not smtp_password:
+        return JSONResponse(status_code=400, content={"success": False, "message": "SMTP credentials are not configured.", "details": details})
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as server:
+            server.starttls()
+            server.login(smtp_email, smtp_password)
+        return {"success": True, "message": "SMTP login succeeded.", "details": details}
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"success": False, "message": f"SMTP login failed: {exc}", "details": details})
+
+
 @app.post("/api/forgot-password")
 async def api_forgot_password(gmail_email: str = Form(...)):
     """Send a 6-digit OTP to the user's Gmail for password reset."""
