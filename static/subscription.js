@@ -45,6 +45,25 @@ function showMessage(text, success = true) {
     subscriptionMessage.className = `message ${success ? "success" : "error"}`;
 }
 
+function formatExpiryDate(value) {
+    if (!value) {
+        return "Not set";
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return "Not set";
+    }
+
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = date.toLocaleString("en-US", { month: "short" });
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+
+    return `${day} ${month} ${year} ${hours}:${minutes}`;
+}
+
 function updateSubscriptionUI(data) {
     const isRequired = data.subscription_required !== false;
     if (data.active) {
@@ -68,7 +87,7 @@ function updateSubscriptionUI(data) {
         sendPageLink.style.display = "inline-block";
         planName.textContent = "—";
     }
-    expiryDate.textContent = data.expiry || "Not set";
+    expiryDate.textContent = formatExpiryDate(data.expiry);
     daysLeft.textContent = data.days_left ?? 0;
 }
 
