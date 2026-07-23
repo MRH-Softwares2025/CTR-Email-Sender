@@ -18,21 +18,21 @@ DEFAULT_PLANS = [
         "id": 2,
         "name": "Weekly",
         "duration_days": 7,
-        "price": 50,
+        "price": 30,
         "description": "7-day access to email automation features",
     },
     {
         "id": 3,
         "name": "Fortnightly",
         "duration_days": 14,
-        "price": 80,
+        "price": 50,
         "description": "14-day access to email automation features",
     },
     {
         "id": 4,
         "name": "Monthly",
         "duration_days": 30,
-        "price": 100,
+        "price": 80,
         "description": "30-day access to email automation features",
     },
 ]
@@ -165,28 +165,28 @@ def get_connection():
 def initialize_default_plans():
     if _BACKEND == "firestore":
         db = _load_firestore_client()
-        plans = db.collection("subscription_plans").limit(1).get()
-        if plans:
-            return
         now = _now_iso()
         for plan in DEFAULT_PLANS:
             payload = dict(plan)
             payload["active"] = True
             payload["created_at"] = now
-            db.collection("subscription_plans").document(str(plan["id"])) .set(payload)
+            db.collection("subscription_plans").document(str(plan["id"])).set(payload, merge=True)
         return
 
     with get_connection() as conn:
-        existing = conn.execute("SELECT COUNT(*) as count FROM subscription_plans").fetchone()
-        if existing["count"] > 0:
-            return
-
         now = _now_iso()
         for plan in DEFAULT_PLANS:
-            conn.execute(
-                "INSERT INTO subscription_plans (id, name, duration_days, price, description, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (plan["id"], plan["name"], plan["duration_days"], plan["price"], plan["description"], 1, now),
-            )
+            existing = conn.execute("SELECT id FROM subscription_plans WHERE id = ?", (plan["id"],)).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE subscription_plans SET name = ?, duration_days = ?, price = ?, description = ?, active = 1, created_at = COALESCE(created_at, ?) WHERE id = ?",
+                    (plan["name"], plan["duration_days"], plan["price"], plan["description"], now, plan["id"]),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO subscription_plans (id, name, duration_days, price, description, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (plan["id"], plan["name"], plan["duration_days"], plan["price"], plan["description"], 1, now),
+                )
         conn.commit()
 
 

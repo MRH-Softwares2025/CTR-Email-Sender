@@ -94,7 +94,7 @@ MPESA_CONSUMER_SECRET=your_mpesa_consumer_secret
 MPESA_SHORTCODE=123456
 MPESA_PASSKEY=your_mpesa_passkey
 MPESA_CALLBACK_URL=http://localhost:8001/api/subscription/confirm
-SUBSCRIPTION_AMOUNT=100
+SUBSCRIPTION_AMOUNT=80
 SUBSCRIPTION_DAYS=30
 PORT=8001
 LOG_LEVEL=INFO
@@ -118,7 +118,7 @@ LOG_LEVEL=INFO
 - **MPESA_SHORTCODE**: MPESA paybill or shortcode for STK Push requests
 - **MPESA_PASSKEY**: MPESA passkey used by your Daraja account
 - **MPESA_CALLBACK_URL**: Local or remote callback endpoint for payment confirmation
-- **SUBSCRIPTION_AMOUNT**: Price of the monthly subscription
+- **SUBSCRIPTION_AMOUNT**: Default monthly subscription price
 - **SUBSCRIPTION_DAYS**: Number of days the subscription remains active after payment
 - **LOG_LEVEL**: Logging level (DEBUG, INFO, WARNING, ERROR)
 

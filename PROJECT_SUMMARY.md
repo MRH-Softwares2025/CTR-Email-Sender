@@ -19,7 +19,7 @@
 - **Template System**: Supports markdown-like formatting (bold `**text**`, italic `*text*`, underline `__text__`) converted to HTML
 - **Subscription System**: 
   - MPESA payment integration (STK Push)
-  - Multiple plans: Daily (KES 10), Weekly (KES 50), Fortnightly (KES 80), Monthly (KES 100)
+  - Multiple plans: Daily (KES 10), Weekly (KES 30), Fortnightly (KES 50), Monthly (KES 80)
   - User-based subscription tracking linked to Gmail email addresses
   - Automatic redirection based on subscription status
 - **Notification System**: 

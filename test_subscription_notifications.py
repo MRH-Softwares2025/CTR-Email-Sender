@@ -1,12 +1,20 @@
 from datetime import datetime, timedelta, timezone
 import unittest
 
+from db import DEFAULT_PLANS
 from notification_system import NotificationManager, NotificationPriority, NotificationType
 
 
 class SubscriptionNotificationTests(unittest.TestCase):
     def setUp(self):
         self.manager = NotificationManager()
+
+    def test_default_plan_prices(self):
+        plan_prices = {plan["name"]: plan["price"] for plan in DEFAULT_PLANS}
+
+        self.assertEqual(plan_prices["Weekly"], 30)
+        self.assertEqual(plan_prices["Fortnightly"], 50)
+        self.assertEqual(plan_prices["Monthly"], 80)
 
     def test_warning_notification_at_7_days(self):
         expiry = datetime.now(timezone.utc) + timedelta(days=7, minutes=5)
