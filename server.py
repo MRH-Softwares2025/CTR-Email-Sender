@@ -50,6 +50,7 @@ from gmail_oauth import (
     fetch_account_email,
 )
 from notification_system import get_notification_manager, NotificationPriority
+from smtp_utils import resolve_smtp_credentials
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -904,8 +905,7 @@ async def api_forgot_password(gmail_email: str = Form(...)):
         return {"success": True, "message": "If that address is registered, a reset code has been sent."}
 
     settings = get_settings() or {}
-    smtp_password = str(settings.get("app_password") or os.getenv("GMAIL_APP_PASSWORD") or "")
-    smtp_email = str(settings.get("gmail_email") or os.getenv("GMAIL_EMAIL") or "")
+    smtp_email, smtp_password = resolve_smtp_credentials(settings, os.environ)
     if not smtp_password or not smtp_email:
         return JSONResponse(
             status_code=400,
